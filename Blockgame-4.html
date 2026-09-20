@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Numberblock Drop Game</title>
+  <style>
+    :root {
+      /* The game is dark in every theme, so these tokens are the same everywhere. */
+      --bg: #1a1a2e;
+      --board: #0f3460;
+      --gold: #ffde59;
+      --cyan: #00f2fe;
+      --muted: #a0a0a0;
+      --danger: #ff4757;
+      color-scheme: dark;
+      box-sizing: border-box;
+      padding-top: env(safe-area-inset-top, 0px);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    html {
+      height: 100%;
+      background-color: var(--bg);
+      scroll-padding-top: env(safe-area-inset-top, 0px);
+    }
+
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background-color: var(--bg);
+      color: #ffffff;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    /* Header and board share one column, so the header always lines up with the board's edges. */
+    .game {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .header {
+      width: 0;                    /* follows the board's width instead of stretching it */
+      min-width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 6px;
+      padding: 0 2px;
+    }
+
+    /* Mode buttons on the left, score on the right */
+    .status {
+      width: 0;
+      min-width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+      padding: 0 2px;
+    }
+
+    .modes {
+      display: inline-flex;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      padding: 2px;
+    }
+
+    .mode-btn {
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: bold;
+      padding: 5px 12px;
+      border: none;
+      border-radius: 14px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      transition: background-color 0.15s, color 0.15s;
+    }
+
+    .mode-btn[aria-pressed="true"] {
+      background: var(--cyan);
+      color: var(--bg);
+    }
+
+    .mode-btn:focus-visible {
+      outline: 3px solid var(--gold);
+      outline-offset: 1px;
+    }
+
+    .title-block {
+      min-width: 0;                /* lets the title wrap on very narrow screens instead of overflowing */
+    }
+
+    .title {
+      font-size: clamp(13px, 4vw, 17px);
+      font-weight: bold;
+      color: var(--gold);
+      margin: 0;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+    }
+
+    .score-board {
+      font-size: 16px;
+      color: var(--cyan);
+      white-space: nowrap;
+    }
+
+    .new-game-btn {
+      flex-shrink: 0;
+      padding: 8px 16px;
+      font-size: 15px;
+      font-weight: bold;
+      font-family: inherit;
+      background-color: var(--gold);
+      color: var(--bg);
+      border: none;
+      border-radius: 20px;
+      cursor: pointer;
+      box-shadow: 0 3px 5px rgba(0,0,0,0.3);
+      transition: transform 0.1s;
+    }
+
+    .new-game-btn:active {
+      transform: scale(0.95);
+    }
+
+    .new-game-btn:focus-visible,
+    .restart-btn:focus-visible {
+      outline: 3px solid var(--cyan);
+      outline-offset: 2px;
+    }
+
+    .game-container {
+      position: relative;
+      border: 4px solid var(--gold);
+      border-radius: 8px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      background-color: var(--board);
+    }
+
+    /* The board is 10 x 18 cells plus a little room for the cubes' top and right faces.
+       The script sets --board-w and --board-ar to match; it shrinks to fit short or narrow screens. */
+    canvas {
+      display: block;
+      border-radius: 4px;
+      aspect-ratio: var(--board-ar, 0.5623);
+      height: auto;
+      width: min(var(--board-w, 370px), calc(100vw - 24px));
+      width: min(
+        var(--board-w, 370px),
+        calc(100vw - 24px),
+        calc((100dvh - 170px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) * var(--board-ar, 0.5623))
+      );
+    }
+
+    .instruction {
+      margin-top: 10px;
+      font-size: 14px;
+      color: var(--muted);
+      text-align: center;
+      padding: 0 12px;
+    }
+
+    .game-over-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.85);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      display: none;
+    }
+
+    .game-over-title {
+      font-size: 32px;
+      color: var(--danger);
+      margin-bottom: 10px;
+    }
+
+    .restart-btn {
+      padding: 10px 20px;
+      font-size: 18px;
+      font-weight: bold;
+      background-color: var(--gold);
+      color: var(--bg);
+      border: none;
+      border-radius: 20px;
+      cursor: pointer;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+      transition: transform 0.1s, background-color 0.2s;
+    }
+
+    .restart-btn:active {
+      transform: scale(0.95);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="game">
+    <div class="header">
+      <div class="title-block">
+        <div class="title">Numberblock Drop</div>
+      </div>
+      <button class="new-game-btn" onclick="resetGame(); this.blur()">New Game</button>
+    </div>
+
+    <div class="status">
+      <div class="modes" role="group" aria-label="Game mode">
+        <button class="mode-btn" data-mode="doubles" aria-pressed="true" onclick="setMode('doubles'); this.blur()">Doubles</button>
+        <button class="mode-btn" data-mode="squares" aria-pressed="false" onclick="setMode('squares'); this.blur()">Squares</button>
+      </div>
+      <div class="score-board">Score: <span id="score">0</span></div>
+    </div>
+
+    <div class="game-container">
+      <canvas id="gameCanvas" width="370" height="658"></canvas>
+      <div id="gameOver" class="game-over-overlay">
+        <div class="game-over-title">Game Over!</div>
+        <button class="restart-btn" onclick="resetGame()">Play Again</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="instruction" id="instruction"></div>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreElem = document.getElementById('score');
+    const gameOverElem = document.getElementById('gameOver');
+    const instructionElem = document.getElementById('instruction');
+
+    // --- BOARD ---
+    // An invisible grid. Everything snaps to it, but nothing draws it.
+    const COLS = 10;
+    const ROWS = 18;
+    const CELL = 36;                 // px per grid square
+    const W = COLS * CELL;           // the grid itself
+    const H = ROWS * CELL;
+    const DEPTH = 10;                // how far back each voxel cube reaches (px), up and to the right
+    const CW = W + DEPTH;            // the canvas leaves room for the cubes' top and right faces
+    const CH = H + DEPTH;
+
+    // Render at the screen's pixel density so the blocks stay crisp on phones.
+    const DPR = Math.min(window.devicePixelRatio || 1, 3);
+    canvas.width = CW * DPR;
+    canvas.height = CH * DPR;
+    document.documentElement.style.setProperty('--board-w', CW + 'px');
+    document.documentElement.style.setProperty('--board-ar', String(CW / CH));
+
+    const DROP_SPEED = 45;           // rows per second while a block is falling
+    const STEP_MS = 80;              // pace of blocks settling and merging
+    const SHOW_GHOST = true;         // faint outline of where the block will land
+
+    // Jelly feel. Bigger JELLY = wobblier blocks (0 turns the jiggle off).
+    const REDUCED = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    const JELLY = REDUCED ? 0.4 : 1;
+    const KICK_SQUASH = 7.5;          // how hard a landing squashes a block (height fraction per second)
+    const KICK_SWAY = 210;           // how hard a bump shoves a block sideways (px per second)
+    const FALL_STRETCH = 0.12;       // blocks stretch a little while they fall
+    const LAND_IMPACT = 0.55;        // landing strength for blocks that fall after a merge (a dropped block is 1)
+
+    let score = 0;
+    let phase = 'aim';               // 'aim' | 'drop' | 'settle' | 'over'
+    let grid = makeGrid();           // grid[row][col] = id of the block in that square (0 = empty)
+    let pieces = new Map();          // id -> { id, value, cells: [[row, col], ...], dy, pop }
+    let nextId = 1;
+    let active = null;               // the block you are currently aiming
+    let settleTimer = 0;
+
+    // Numberblock colors
+    const NUMBERBLOCKS = {
+      1:    { color: "#FF3333" },
+      2:    { color: "#FF8800" },
+      4:    { color: "#33CC33" },
+      8:    { color: "#CC0099" },
+      16:   { color: "#3399FF" },
+      32:   { color: "#9933FF" },
+      64:   { color: "#FF0066" },
+      128:  { color: "#00FFCC" },
+      256:  { color: "#FFCC00" },
+      512:  { color: "#FF6600" },
+      1024: { color: "#00FFFF" },
+      2048: { color: "#FFD700" },
+      // Square numbers (Squares mode)
+      9:    { color: "#FFC400" },
+      25:   { color: "#00C9A7" },
+      36:   { color: "#A64DFF" },
+      49:   { color: "#FF9ECF" },
+      81:   { color: "#8B5A2B" },
+      100:  { color: "#B0BEC5" }
+    };
+    const FALLBACK_LOOK = { color: "#888888" };
+
+    function makeGrid() {
+      return Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+    }
+
+    // --- MODES ---
+    // Doubles: matching blocks merge into double (1+1=2, 2+2=4, ...).
+    // Squares: any group of touching blocks that adds up to a square number merges into that square.
+    let mode = 'doubles';
+
+    const MODES = {
+      doubles: {
+        hint: 'Matching blocks merge into double',
+        spawn() {                                  // drops 1, 2, or 4
+          const rand = Math.random();
+          if (rand < 0.6) return 1;
+          if (rand < 0.9) return 2;
+          return 4;
+        }
+      },
+      squares: {
+        hint: 'Touching blocks that add up to a square number merge',
+        spawn() {                                  // drops 1, 4, 9, or 16
+          const rand = Math.random();
+          if (rand < 0.4) return 1;
+          if (rand < 0.7) return 4;
+          if (rand < 0.9) return 9;
+          return 16;
+        }
+      }
+    };
+
+    function getRandomSpawnValue() {
+      return MODES[mode].spawn();
+    }
+
+    function updateModeUI() {
+      document.querySelectorAll('.mode-btn').forEach((btn) => {
+        btn.setAttribute('aria-pressed', String(btn.dataset.mode === mode));
+      });
+      instructionElem.textContent = 'Drag to aim \u2022 Release to drop \u2022 ' + MODES[mode].hint;
+    }
+
+    function setMode(next) {
+      if (next === mode) return;
+      mode = next;
+      updateModeUI();
+      resetGame();                                 // each mode starts a fresh game
+    }
+
+    // --- SHAPES ---
+    // Every number is built from that many squares, like the Numberblocks:
+    // 1 is one square, 2 is two stacked, 4 is a 2x2, 8 is a 2x4, 9 is a 3x3, 16 is a 4x4 ...
+    const shapeCache = new Map();
+
+    function shapeFor(n) {
+      if (shapeCache.has(n)) return shapeCache.get(n);
+      const k = Math.log2(n);
+      const h = Number.isInteger(k)
+        ? n / Math.pow(2, Math.floor(k / 2))          // powers of two: square, then a tall rectangle
+        : Math.ceil(n / Math.floor(Math.sqrt(n)));    // any other number: fill column by column
+      const cells = [];
+      for (let i = 0; i < n; i++) {
+        cells.push([h - 1 - (i % h), Math.floor(i / h)]);   // [row, col], top-left origin
+      }
+      const shape = { cells, w: Math.ceil(n / h), h };
+      shapeCache.set(n, shape);
+      return shape;
+    }
+
+    function turned(shape) {
+      return { cells: shape.cells.map(([r, c]) => [c, r]), w: shape.h, h: shape.w };
+    }
+
+    function bounds(cells) {
+      let minR = Infinity, maxR = -Infinity, minC = Infinity, maxC = -Infinity;
+      for (const [r, c] of cells) {
+        if (r < minR) minR = r;
+        if (r > maxR) maxR = r;
+        if (c < minC) minC = c;
+        if (c > maxC) maxC = c;
+      }
+      return { minR, maxR, minC, maxC, w: maxC - minC + 1, h: maxR - minR + 1 };
+    }
+
+    // --- JELLY ---
+    // Each block is a few damped springs: one squashes it flat and bulges it out,
+    // one leans the top sideways, and a faster one adds a wobble on top of that.
+    // Bigger blocks wobble more slowly.
+    function newJelly(rows) {
+      return {
+        s: 0, sv: 0, sT: 0,        // squash (+) / stretch (-) as a fraction of height, its speed, its resting target
+        sw: 0, swv: 0, swT: 0,     // sideways lean of the top edge (px)
+        b: 0, bv: 0,               // faster wobble that bends the top more than the middle
+        w: 2 * Math.PI * 4.2 / (1 + 0.35 * Math.log2(Math.max(1, rows)))
+      };
+    }
+
+    function stepJelly(j, dt) {
+      const n = Math.max(1, Math.ceil(dt / 8));          // small sub-steps keep the springs stable
+      const h = dt / n / 1000;
+      const wSway = j.w * 0.8, wBend = j.w * 1.5;
+      for (let i = 0; i < n; i++) {
+        j.sv += (-j.w * j.w * (j.s - j.sT) - 2 * 0.10 * j.w * j.sv) * h;
+        j.s += j.sv * h;
+        j.swv += (-wSway * wSway * (j.sw - j.swT) - 2 * 0.09 * wSway * j.swv) * h;
+        j.sw += j.swv * h;
+        j.bv += (-wBend * wBend * j.b - 2 * 0.12 * wBend * j.bv) * h;
+        j.b += j.bv * h;
+      }
+      j.sv = Math.max(-16, Math.min(16, j.sv));
+      j.s = Math.max(-0.28, Math.min(0.34, j.s));
+      j.swv = Math.max(-420, Math.min(420, j.swv));
+      j.sw = Math.max(-22, Math.min(22, j.sw));
+      j.bv = Math.max(-420, Math.min(420, j.bv));
+      j.b = Math.max(-16, Math.min(16, j.b));
+    }
+
+    // Which blocks touch this one, and on which side.
+    function touching(p) {
+      const found = { below: new Set(), above: new Set(), left: new Set(), right: new Set() };
+      for (const [r, c] of p.cells) {
+        for (const [rr, cc, side] of [[r + 1, c, 'below'], [r - 1, c, 'above'], [r, c - 1, 'left'], [r, c + 1, 'right']]) {
+          if (rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS) continue;
+          const id = grid[rr][cc];
+          if (id && id !== p.id) found[side].add(id);
+        }
+      }
+      return found;
+    }
+
+    // A bump ripples into the blocks it touches: the block underneath gets squished,
+    // the ones beside it get shoved away. Heavier blocks shove lighter ones harder.
+    function bumpNeighbors(p, strength) {
+      const t = touching(p);
+      const kick = (id, squash, sway) => {
+        const q = pieces.get(id);
+        if (!q) return;
+        const m = Math.min(1.6, Math.max(0.5, Math.sqrt(p.value / q.value)));
+        q.j.sv += KICK_SQUASH * squash * strength * m * JELLY;
+        q.j.swv += KICK_SWAY * sway * strength * m * JELLY;
+        q.j.bv += KICK_SWAY * sway * strength * m * 0.5 * JELLY;
+      };
+      for (const id of t.below) kick(id, 0.55, 0);
+      for (const id of t.above) kick(id, 0.35, 0);
+      for (const id of t.left) kick(id, 0.2, -0.7);
+      for (const id of t.right) kick(id, 0.2, 0.7);
+      if (t.left.size) p.j.swv += KICK_SWAY * 0.25 * strength * JELLY;     // the bumped block pushes back
+      if (t.right.size) p.j.swv -= KICK_SWAY * 0.25 * strength * JELLY;
+    }
+
+    function impact(p, strength) {
+      p.j.sv += KICK_SQUASH * strength * JELLY;
+      bumpNeighbors(p, strength);
+    }
+
+    // Blocks resting on a jelly ride along with its squashing and swaying,
+    // so stacks move as one and never gap or overlap.
+    function updateRide() {
+      const lowestFirst = [...pieces.values()].sort((a, b) =>
+        Math.max(...b.cells.map(([r]) => r)) - Math.max(...a.cells.map(([r]) => r)));
+      for (const p of lowestFirst) { p.rx = 0; p.ry = 0; }
+      for (const p of lowestFirst) {
+        let sx = 0, sy = 0, n = 0;
+        for (const [r, c] of p.cells) {
+          const id = r + 1 < ROWS ? grid[r + 1][c] : 0;
+          if (!id || id === p.id) continue;
+          const q = pieces.get(id);
+          const qb = bounds(q.cells);
+          const up = (qb.maxR + 1) * CELL - (r + 1) * CELL;          // height of the contact above q's base
+          const t = Math.min(1, Math.max(0, up / (qb.h * CELL)));
+          const wide = 1 + q.j.s * (0.3 + 0.5 * Math.sin(Math.PI * t));
+          sy += q.j.s * up + q.ry;
+          sx += ((c + 0.5) * CELL - (qb.minC + qb.maxC + 1) * CELL / 2) * (wide - 1) + q.j.sw * t + q.j.b * t * t + q.rx;
+          n++;
+        }
+        if (n) { p.rx = sx / n; p.ry = sy / n; }
+      }
+    }
+
+    // --- PLACEMENT ---
+    function fits(cells, row, col) {
+      for (const [dr, dc] of cells) {
+        const r = row + dr, c = col + dc;
+        if (r < 0 || r >= ROWS || c < 0 || c >= COLS || grid[r][c] !== 0) return false;
+      }
+      return true;
+    }
+
+    // Row where a block dropped in this column comes to rest, or -1 if there is no room.
+    function landingRow(cells, col) {
+      if (!fits(cells, 0, col)) return -1;
+      let r = 0;
+      while (fits(cells, r + 1, col)) r++;
+      return r;
+    }
+
+    function addPiece(id, value, cells) {
+      const p = { id, value, cells, dy: 0, pop: 0, rx: 0, ry: 0, falling: false, dirty: true, j: newJelly(bounds(cells).h) };
+      pieces.set(id, p);
+      for (const [r, c] of cells) grid[r][c] = id;
+      return p;
+    }
+
+    // --- SPAWNING & INPUT ---
+    function spawnNextBlock() {
+      const value = getRandomSpawnValue();
+      const shape = shapeFor(value);
+      const center = Math.round((COLS - shape.w) / 2);
+
+      // Start at the middle, or the nearest column where the block fits at the top.
+      let col = -1;
+      for (let d = 0; d < COLS && col < 0; d++) {
+        for (const cand of [center - d, center + d]) {
+          if (cand >= 0 && cand <= COLS - shape.w && fits(shape.cells, 0, cand)) { col = cand; break; }
+        }
+      }
+      if (col < 0) { triggerGameOver(); return; }
+
+      active = {
+        value, shape, col,
+        x: col * CELL,
+        y: 0,
+        land: landingRow(shape.cells, col),
+        j: newJelly(shape.h)
+      };
+      active.j.sv = 5 * JELLY;              // a little plop when it appears
+      phase = 'aim';
+    }
+
+    function setActiveCol(col) {
+      if (phase !== 'aim' || !active) return;
+      active.col = Math.max(0, Math.min(COLS - active.shape.w, col));
+      active.land = landingRow(active.shape.cells, active.col);
+    }
+
+    function handlePointerMove(clientX) {
+      if (phase !== 'aim' || !active) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = (clientX - rect.left) * (CW / rect.width);
+      // Center the block under the finger, then snap to the nearest square.
+      setActiveCol(Math.round(x / CELL - active.shape.w / 2));
+    }
+
+    function handlePointerRelease() {
+      if (phase !== 'aim' || !active) return;
+      if (active.land < 0) return;          // no room in this spot
+      active.x = active.col * CELL;
+      phase = 'drop';
+    }
+
+    let pointerIsDown = false;
+    canvas.addEventListener('pointerdown', (e) => {
+      if (phase !== 'aim') return;
+      pointerIsDown = true;
+      canvas.setPointerCapture(e.pointerId);
+      handlePointerMove(e.clientX);
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (pointerIsDown) handlePointerMove(e.clientX);
+    });
+    canvas.addEventListener('pointerup', () => {
+      if (!pointerIsDown) return;
+      pointerIsDown = false;
+      handlePointerRelease();
+    });
+    canvas.addEventListener('pointercancel', () => { pointerIsDown = false; });
+
+    // Keyboard: arrows to move, down or space to drop
+    window.addEventListener('keydown', (e) => {
+      if (e.target.closest && e.target.closest('button')) return;      // a focused button keeps Space for itself
+      if (phase !== 'aim' || !active) return;
+      if (e.key === 'ArrowLeft') { e.preventDefault(); setActiveCol(active.col - 1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); setActiveCol(active.col + 1); }
+      else if (e.key === 'ArrowDown' || e.key === ' ') { e.preventDefault(); handlePointerRelease(); }
+    });
+
+    // --- GAME LOGIC ---
+    function lockActive() {
+      const id = nextId++;
+      const cells = active.shape.cells.map(([dr, dc]) => [active.land + dr, active.col + dc]);
+      const p = addPiece(id, active.value, cells);
+      p.j = active.j;                       // the stretch from falling turns into the squash
+      p.j.swT = 0;
+      p.j.sT = 0;
+      impact(p, 1);
+      active = null;
+      phase = 'settle';
+      settleTimer = STEP_MS;
+    }
+
+    // One beat of settling: blocks fall first, then matching neighbors merge.
+    // Returns true if anything changed (so there may be more to do).
+    function settleStep() {
+      const maxRow = (p) => Math.max(...p.cells.map(([r]) => r));
+      const list = [...pieces.values()].sort((a, b) => maxRow(b) - maxRow(a));   // lowest first
+      let moved = false;
+      const landed = [];
+      for (const p of list) {
+        if (canFall(p)) { movePieceDown(p); moved = true; }
+        else if (p.falling) { p.falling = false; landed.push(p); }      // it was falling and just stopped
+      }
+      for (const p of landed) impact(p, LAND_IMPACT);
+      if (moved) return true;
+      return mergeOnce();
+    }
+
+    function canFall(p) {
+      return p.cells.every(([r, c]) => r + 1 < ROWS && (grid[r + 1][c] === 0 || grid[r + 1][c] === p.id));
+    }
+
+    function movePieceDown(p) {
+      for (const [r, c] of p.cells) grid[r][c] = 0;
+      p.cells = p.cells.map(([r, c]) => [r + 1, c]);
+      for (const [r, c] of p.cells) grid[r][c] = p.id;
+      p.dy -= 1;                                   // drawn one row higher, then eases down
+      p.falling = true;
+      p.dirty = true;                              // it may now touch new neighbors
+    }
+
+    function mergeOnce() {
+      return mode === 'squares' ? mergeSquaresOnce() : mergeDoublesOnce();
+    }
+
+    // Doubles: touching blocks with the same value merge into one block of double the value.
+    function mergeDoublesOnce() {
+      const pairs = [];
+      const seen = new Set();
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const id = grid[r][c];
+          if (!id) continue;
+          for (const [dr, dc] of [[0, 1], [1, 0]]) {
+            const r2 = r + dr, c2 = c + dc;
+            if (r2 >= ROWS || c2 >= COLS) continue;
+            const id2 = grid[r2][c2];
+            if (!id2 || id2 === id) continue;
+            if (pieces.get(id).value !== pieces.get(id2).value) continue;
+            const key = Math.min(id, id2) + '-' + Math.max(id, id2);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            pairs.push([id, id2]);
+          }
+        }
+      }
+      const used = new Set();
+      let merged = false;
+      for (const [a, b] of pairs) {
+        if (used.has(a) || used.has(b)) continue;
+        const pa = pieces.get(a), pb = pieces.get(b);
+        mergeGroup([pa, pb], pa.value * 2);
+        used.add(a);
+        used.add(b);
+        merged = true;
+      }
+      return merged;
+    }
+
+    // Squares: a group of touching blocks whose values add up to a square number merges into
+    // one square block. The smallest group wins (fewest blocks, then the smallest total), and
+    // only groups that include a block that just landed, fell, or was made are searched.
+    function isSquare(n) {
+      const r = Math.round(Math.sqrt(n));
+      return r * r === n;
+    }
+
+    function contactGraph() {
+      const adj = new Map();
+      for (const id of pieces.keys()) adj.set(id, new Set());
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const id = grid[r][c];
+          if (!id) continue;
+          for (const [dr, dc] of [[0, 1], [1, 0]]) {
+            const r2 = r + dr, c2 = c + dc;
+            if (r2 >= ROWS || c2 >= COLS) continue;
+            const id2 = grid[r2][c2];
+            if (id2 && id2 !== id) { adj.get(id).add(id2); adj.get(id2).add(id); }
+          }
+        }
+      }
+      return adj;
+    }
+
+    // Finds every connected group of exactly `size` blocks that includes the seed and adds up to a square.
+    function findSquareGroups(seedId, size, adj, budget, report) {
+      const MAXSUM = COLS * COLS;                  // the biggest square that fits across the board
+      const sub = [seedId];
+      const inSub = new Set(sub);
+      const walk = (sum, ext, banned) => {
+        if (sub.length === size) {
+          if (isSquare(sum)) report(sub.slice(), sum);
+          return;
+        }
+        for (let i = 0; i < ext.length; i++) {
+          if (--budget.left < 0) return;
+          const w = ext[i];
+          const total = sum + pieces.get(w).value;
+          if (total > MAXSUM) continue;
+          // Blocks tried earlier in this list are off limits below, so each group is found once.
+          const childBanned = new Set(banned);
+          for (let k = 0; k < i; k++) childBanned.add(ext[k]);
+          const inExt = new Set(ext);
+          const childExt = ext.slice(i + 1);
+          for (const u of adj.get(w)) {
+            if (!inSub.has(u) && !childBanned.has(u) && !inExt.has(u)) childExt.push(u);
+          }
+          sub.push(w);
+          inSub.add(w);
+          walk(total, childExt, childBanned);
+          sub.pop();
+          inSub.delete(w);
+        }
+      };
+      walk(pieces.get(seedId).value, [...adj.get(seedId)], new Set());
+    }
+
+    function mergeSquaresOnce() {
+      const seeds = [...pieces.values()].filter((p) => p.dirty).map((p) => p.id);
+      if (!seeds.length) return false;
+      const adj = contactGraph();
+      const budget = { left: 30000 };              // keeps a crowded board from ever stalling the game
+      let best = null;
+      for (let size = 2; size <= 14 && !best && budget.left > 0; size++) {
+        for (const id of seeds) {
+          findSquareGroups(id, size, adj, budget, (group, sum) => {
+            if (!best || sum < best.sum) best = { group, sum };
+          });
+        }
+      }
+      if (!best) {
+        for (const p of pieces.values()) p.dirty = false;      // nothing to merge until something moves
+        return false;
+      }
+      mergeGroup(best.group.map((id) => pieces.get(id)), best.sum);
+      return true;
+    }
+
+    // The blocks in a group become one block of the new value, reshaped into
+    // the proper Numberblock shape wherever it fits (1 + 1 = 2, 4 + 4 + 1 = 9, ...).
+    function mergeGroup(group, value) {
+      const union = group.flatMap((p) => p.cells);
+      const unionKeys = new Set(union.map(([r, c]) => r + ',' + c));
+      const centerCol = union.reduce((s, [, c]) => s + c + 0.5, 0) / union.length;
+
+      for (const [r, c] of union) grid[r][c] = 0;
+      for (const p of group) pieces.delete(p.id);
+
+      const shape = shapeFor(value);
+      let cells = placeBest(shape, unionKeys, centerCol);
+      if (!cells && shape.w !== shape.h) cells = placeBest(turned(shape), unionKeys, centerCol);
+      if (!cells) cells = union;                   // no room to reshape: keep the squares where they are
+
+      const id = nextId++;
+      const m = addPiece(id, value, cells);
+      m.pop = 1;
+      // The new block carries on the wobble of the blocks it came from, then boings taller.
+      const avg = (k) => group.reduce((sum, p) => sum + p.j[k], 0) / group.length;
+      Object.assign(m.j, { s: avg('s'), sv: avg('sv') - 7 * JELLY, sw: avg('sw'), swv: avg('swv'), b: avg('b'), bv: avg('bv') });
+      bumpNeighbors(m, 0.5);
+
+      score += value;
+      scoreElem.textContent = score;
+    }
+
+    // Best spot for a shape: overlapping the old blocks, as low as possible, nearest their middle.
+    function placeBest(shape, unionKeys, centerCol) {
+      let best = null, bestScore = -Infinity;
+      for (let r0 = 0; r0 <= ROWS - shape.h; r0++) {
+        for (let c0 = 0; c0 <= COLS - shape.w; c0++) {
+          let overlap = 0, ok = true;
+          for (const [dr, dc] of shape.cells) {
+            const r = r0 + dr, c = c0 + dc;
+            if (grid[r][c] !== 0) { ok = false; break; }
+            if (unionKeys.has(r + ',' + c)) overlap++;
+          }
+          if (!ok || overlap === 0) continue;
+          const s = overlap * 1000 + r0 * 10 - Math.abs(c0 + shape.w / 2 - centerCol);
+          if (s > bestScore) { bestScore = s; best = [r0, c0]; }
+        }
+      }
+      return best && shape.cells.map(([dr, dc]) => [best[0] + dr, best[1] + dc]);
+    }
+
+    function triggerGameOver() {
+      phase = 'over';
+      active = null;
+      gameOverElem.style.display = 'flex';
+    }
+
+    function resetGame() {
+      grid = makeGrid();
+      pieces = new Map();
+      nextId = 1;
+      score = 0;
+      scoreElem.textContent = score;
+      pointerIsDown = false;
+      gameOverElem.style.display = 'none';
+      spawnNextBlock();
+    }
+
+    function update(dt) {
+      for (const p of pieces.values()) {
+        if (p.dy < 0) p.dy = Math.min(0, p.dy + dt / STEP_MS);
+        if (p.pop > 0) p.pop = Math.max(0, p.pop - dt / 260);
+        p.j.sT = p.dy < -0.02 ? -FALL_STRETCH * JELLY : 0;
+        stepJelly(p.j, dt);
+      }
+      updateRide();
+
+      if (active) {
+        const prevX = active.x;
+        active.x += (active.col * CELL - active.x) * (1 - Math.exp(-dt * 0.035));   // quick slide into the snapped spot
+        const vx = (active.x - prevX) / Math.max(dt, 1) * 1000;                       // px per second
+        active.j.swT = phase === 'aim' ? Math.max(-9, Math.min(9, -vx * 0.012)) * JELLY : 0;   // top lags behind
+        active.j.sT = phase === 'drop' ? -FALL_STRETCH * 1.2 * JELLY : 0;
+        stepJelly(active.j, dt);
+        if (phase === 'drop') {
+          active.y += DROP_SPEED * dt / 1000;
+          if (active.y >= active.land) lockActive();
+        }
+      }
+
+      if (phase === 'settle') {
+        settleTimer -= dt;
+        if (settleTimer <= 0) {
+          if (settleStep()) settleTimer = STEP_MS;
+          else spawnNextBlock();
+        }
+      }
+    }
+
+    // --- DRAWING ---
+    function shade(hex, amt) {
+      const n = parseInt(hex.slice(1), 16);
+      const target = amt < 0 ? 0 : 255;
+      const p = Math.abs(amt);
+      const mix = (v) => Math.round(v + (target - v) * p);
+      return `rgb(${mix(n >> 16)}, ${mix((n >> 8) & 255)}, ${mix(n & 255)})`;
+    }
+
+    function blend(hexA, hexB, t) {
+      const a = parseInt(hexA.slice(1), 16), b = parseInt(hexB.slice(1), 16);
+      const mix = (shift) => Math.round(((a >> shift) & 255) * (1 - t) + ((b >> shift) & 255) * t);
+      return '#' + [16, 8, 0].map((shift) => mix(shift).toString(16).padStart(2, '0')).join('');
+    }
+
+    // Light comes from the top left: tops of cubes are lit, right sides are in shade.
+    const lookCache = new Map();
+    function lookFor(value, dim) {
+      const key = value + (dim ? 'd' : '');
+      if (!lookCache.has(key)) {
+        const raw = (NUMBERBLOCKS[value] || FALLBACK_LOOK).color;
+        const base = dim ? blend(raw, '#0f3460', 0.6) : raw;       // faded when there's no room to drop
+        lookCache.set(key, {
+          top: shade(base, 0.35),
+          side: shade(base, -0.35),
+          edge: shade(base, -0.55),
+          frontHi: shade(base, 0.14),
+          frontLo: shade(base, -0.1)
+        });
+      }
+      return lookCache.get(key);
+    }
+
+    function traceOutline(cells, keys, ox, oy, inset, wp) {
+      ctx.beginPath();
+      const seg = (ax, ay, bx, by) => {
+        const [px, py] = wp(ax, ay), [qx, qy] = wp(bx, by);
+        ctx.moveTo(px, py);
+        ctx.lineTo(qx, qy);
+      };
+      for (const [r, c] of cells) {
+        const x = ox + c * CELL, y = oy + r * CELL;
+        if (!keys.has((r - 1) + ',' + c)) seg(x, y + inset, x + CELL, y + inset);
+        if (!keys.has((r + 1) + ',' + c)) seg(x, y + CELL - inset, x + CELL, y + CELL - inset);
+        if (!keys.has(r + ',' + (c - 1))) seg(x + inset, y, x + inset, y + CELL);
+        if (!keys.has(r + ',' + (c + 1))) seg(x + CELL - inset, y, x + CELL - inset, y + CELL);
+      }
+    }
+
+    function drawFace(cx, cy, s, sx = 1, sy = 1, rot = 0) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(rot);
+      ctx.scale(s * sx, s * sy);
+      for (const ex of [-7, 7]) {
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(ex, -3, 5.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = '#111111';
+        ctx.beginPath();
+        ctx.arc(ex + 0.5, -2.5, 2.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.strokeStyle = '#111111';
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(0, 2, 7, Math.PI * 0.2, Math.PI * 0.8);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // The faint outline of where the block will land
+    function drawGhost(cells, ox, oy) {
+      const keys = new Set(cells.map(([r, c]) => r + ',' + c));
+      ctx.save();
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.07)';
+      for (const [r, c] of cells) ctx.fillRect(ox + c * CELL, oy + r * CELL, CELL, CELL);
+      traceOutline(cells, keys, ox, oy, 1, (x, y) => [x, y]);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'square';
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Plans how to draw one Numberblock. Every square is a voxel: a little cube with a lit top,
+    // a shaded right side and a front, all bent by the block's jelly springs. It returns
+    //   items   - one drawing job per cube, so cubes from every block can be drawn back to front
+    //   overlay - the face and number, drawn on top once all the cubes are down
+    function planShape(cells, ox, oy, value, o = {}) {
+      const look = lookFor(value, o.dim);
+      const keys = new Set(cells.map(([r, c]) => r + ',' + c));
+      const b = bounds(cells);
+      const j = o.jelly;
+      const sq = j ? j.s : 0, sway = j ? j.sw : 0, bend = j ? j.b : 0;
+
+      // The jelly warp: the bottom stays planted, the top squashes down, the sides bulge,
+      // and the top leans and wobbles. It's applied to every corner so the cubes stay joined.
+      const baseY = oy + (b.maxR + 1) * CELL;
+      const midX = ox + (b.minC + b.maxC + 1) * CELL / 2;
+      const H = b.h * CELL;
+      const heightFrac = (y) => Math.min(1, Math.max(0, (baseY - y) / H));
+      const wp = (x, y) => {
+        const t = heightFrac(y);
+        const wide = 1 + sq * (0.3 + 0.5 * Math.sin(Math.PI * t));
+        return [midX + (x - midX) * wide + sway * t + bend * t * t, baseY - (baseY - y) * (1 - sq)];
+      };
+      // Where a point ends up, and how much the jelly stretches and tilts things there (for the face and number)
+      const local = (x, y) => {
+        const [px, py] = wp(x, y);
+        const t = heightFrac(y);
+        return { x: px, y: py, sx: 1 + sq * (0.3 + 0.5 * Math.sin(Math.PI * t)), sy: 1 - sq, rot: 0.5 * (sway + 2 * bend * t) / H };
+      };
+      const quad = (x, y) => [wp(x, y), wp(x + CELL, y), wp(x + CELL, y + CELL), wp(x, y + CELL)];
+      const trace = (pts, close = true) => {
+        ctx.beginPath();
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+        if (close) ctx.closePath();
+      };
+      const back = (pt) => [pt[0] + DEPTH, pt[1] - DEPTH];       // the far side of the cube, up and to the right
+
+      const drawCube = (r, c) => {
+        const x = ox + c * CELL, y = oy + r * CELL;
+        const [tl, tr, br, bl] = quad(x, y);
+        const faces = [[tl, tr, back(tr), back(tl)], [tr, br, back(br), back(tr)], [tl, tr, br, bl]];   // top, right, front
+
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'butt';
+        ctx.strokeStyle = look.edge;
+        ctx.lineWidth = 1.5;
+        trace(faces[0]);
+        ctx.fillStyle = look.top;
+        ctx.fill();
+        ctx.stroke();
+        trace(faces[1]);
+        ctx.fillStyle = look.side;
+        ctx.fill();
+        ctx.stroke();
+
+        trace(faces[2]);
+        const g = ctx.createLinearGradient(0, tl[1], 0, bl[1]);
+        g.addColorStop(0, look.frontHi);
+        g.addColorStop(1, look.frontLo);
+        ctx.fillStyle = g;
+        ctx.fill();
+        ctx.globalAlpha = 0.4;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+
+        // Bevel on the front
+        ctx.lineWidth = 2;
+        trace([wp(x + 4, y + CELL - 4), wp(x + 4, y + 4), wp(x + CELL - 4, y + 4)], false);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.stroke();
+        trace([wp(x + CELL - 4, y + 4), wp(x + CELL - 4, y + CELL - 4), wp(x + 4, y + CELL - 4)], false);
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.16)';
+        ctx.stroke();
+
+        // Flash when a merge just happened
+        if (o.flash > 0) {
+          ctx.fillStyle = `rgba(255, 255, 255, ${0.5 * o.flash})`;
+          for (const f of faces) { trace(f); ctx.fill(); }
+        }
+
+        // Heavier line where the block's outline runs along this cube's front
+        traceOutline([[r, c]], keys, ox, oy, 1.5, wp);
+        ctx.strokeStyle = look.edge;
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      };
+
+      const overlay = () => {
+        ctx.save();
+        ctx.globalAlpha = o.dim ? 0.5 : 1;
+
+        // Face on the top row
+        const faceScale = Math.min(1.9, 1 + 0.35 * Math.log2(b.w));
+        const topRow = cells.filter(([r]) => r === b.minR);
+        const faceX = ox + (topRow.reduce((sum, [, c]) => sum + c, 0) / topRow.length + 0.5) * CELL;
+        const f = local(faceX, oy + (b.minR + 0.5) * CELL);
+        drawFace(f.x, f.y, faceScale, f.sx, f.sy, f.rot);
+
+        // Number on the bottom row (only when the shape is more than one row tall)
+        if (b.maxR > b.minR) {
+          const botRow = cells.filter(([r]) => r === b.maxR);
+          const numX = ox + (botRow.reduce((sum, [, c]) => sum + c, 0) / botRow.length + 0.5) * CELL;
+          const n = local(numX, oy + (b.maxR + 0.5) * CELL);
+          ctx.translate(n.x, n.y + 1);
+          ctx.rotate(n.rot);
+          ctx.scale(n.sx, n.sy);
+          ctx.font = `800 ${Math.round(15 * Math.min(1.7, faceScale))}px 'Segoe UI', Arial, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.lineJoin = 'round';
+          ctx.lineWidth = 4;
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.45)';
+          ctx.strokeText(String(value), 0, 0);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(String(value), 0, 0);
+        }
+        ctx.restore();
+      };
+
+      // Sort keys: where each cube sits on screen, in quarter-rows
+      const items = cells.map(([r, c]) => ({
+        row: Math.round((oy / CELL + r) * 4),
+        col: Math.round((ox / CELL + c) * 4),
+        draw: () => drawCube(r, c)
+      }));
+      return { items, overlay };
+    }
+
+    function render() {
+      // Shift down by DEPTH so the tops of the highest cubes have room.
+      ctx.setTransform(DPR, 0, 0, DPR, 0, DEPTH * DPR);
+      ctx.clearRect(0, -DEPTH, CW, CH);
+
+      if (active && SHOW_GHOST && phase === 'aim' && active.land > 0) {
+        drawGhost(active.shape.cells, active.col * CELL, active.land * CELL);
+      }
+
+      const plans = [];
+      for (const p of pieces.values()) {
+        plans.push(planShape(p.cells, p.rx, p.dy * CELL + p.ry, p.value, { jelly: p.j, flash: p.pop }));
+      }
+      if (active) {
+        plans.push(planShape(active.shape.cells, active.x, active.y * CELL, active.value, {
+          dim: active.land < 0,
+          jelly: active.j
+        }));
+      }
+
+      // Cubes are drawn back to front: lowest row first, left to right. Each cube's top and side
+      // reach into the square above and to the right, so whatever sits there covers them correctly.
+      const items = plans.flatMap((plan) => plan.items);
+      items.sort((a, b) => (b.row - a.row) || (a.col - b.col));
+      for (const item of items) item.draw();
+      for (const plan of plans) plan.overlay();
+    }
+
+    // --- GAME LOOP ---
+    let lastTime = 0;
+    function frame(now) {
+      if (!lastTime) lastTime = now;
+      const dt = Math.min(50, now - lastTime);
+      lastTime = now;
+      update(dt);
+      render();
+      requestAnimationFrame(frame);
+    }
+
+    updateModeUI();
+    spawnNextBlock();
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>
