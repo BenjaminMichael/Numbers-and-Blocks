@@ -158,17 +158,18 @@
       background-color: var(--board);
     }
 
-    /* The board is 10 x 18 cells (360 x 648). It shrinks to fit short or narrow screens. */
+    /* The board is 10 x 18 cells plus a little room for the cubes' top and right faces.
+       The script sets --board-w and --board-ar to match; it shrinks to fit short or narrow screens. */
     canvas {
       display: block;
       border-radius: 4px;
-      aspect-ratio: 360 / 648;
+      aspect-ratio: var(--board-ar, 0.5623);
       height: auto;
-      width: min(360px, calc(100vw - 24px));
+      width: min(var(--board-w, 370px), calc(100vw - 24px));
       width: min(
-        360px,
+        var(--board-w, 370px),
         calc(100vw - 24px),
-        calc((100dvh - 170px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) * 5 / 9)
+        calc((100dvh - 170px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) * var(--board-ar, 0.5623))
       );
     }
 
@@ -238,7 +239,7 @@
     </div>
 
     <div class="game-container">
-      <canvas id="gameCanvas" width="360" height="648"></canvas>
+      <canvas id="gameCanvas" width="370" height="658"></canvas>
       <div id="gameOver" class="game-over-overlay">
         <div class="game-over-title">Game Over!</div>
         <button class="restart-btn" onclick="resetGame()">Play Again</button>
@@ -260,13 +261,18 @@
     const COLS = 10;
     const ROWS = 18;
     const CELL = 36;                 // px per grid square
-    const W = COLS * CELL;
+    const W = COLS * CELL;           // the grid itself
     const H = ROWS * CELL;
+    const DEPTH = 10;                // how far back each voxel cube reaches (px), up and to the right
+    const CW = W + DEPTH;            // the canvas leaves room for the cubes' top and right faces
+    const CH = H + DEPTH;
 
     // Render at the screen's pixel density so the blocks stay crisp on phones.
     const DPR = Math.min(window.devicePixelRatio || 1, 3);
-    canvas.width = W * DPR;
-    canvas.height = H * DPR;
+    canvas.width = CW * DPR;
+    canvas.height = CH * DPR;
+    document.documentElement.style.setProperty('--board-w', CW + 'px');
+    document.documentElement.style.setProperty('--board-ar', String(CW / CH));
 
     const DROP_SPEED = 45;           // rows per second while a block is falling
     const STEP_MS = 80;              // pace of blocks settling and merging
@@ -550,7 +556,7 @@
     function handlePointerMove(clientX) {
       if (phase !== 'aim' || !active) return;
       const rect = canvas.getBoundingClientRect();
-      const x = (clientX - rect.left) * (W / rect.width);
+      const x = (clientX - rect.left) * (CW / rect.width);
       // Center the block under the finger, then snap to the nearest square.
       setActiveCol(Math.round(x / CELL - active.shape.w / 2));
     }
@@ -581,476 +587,4 @@
 
     // Keyboard: arrows to move, down or space to drop
     window.addEventListener('keydown', (e) => {
-      if (e.target.closest && e.target.closest('button')) return;      // a focused button keeps Space for itself
-      if (phase !== 'aim' || !active) return;
-      if (e.key === 'ArrowLeft') { e.preventDefault(); setActiveCol(active.col - 1); }
-      else if (e.key === 'ArrowRight') { e.preventDefault(); setActiveCol(active.col + 1); }
-      else if (e.key === 'ArrowDown' || e.key === ' ') { e.preventDefault(); handlePointerRelease(); }
-    });
-
-    // --- GAME LOGIC ---
-    function lockActive() {
-      const id = nextId++;
-      const cells = active.shape.cells.map(([dr, dc]) => [active.land + dr, active.col + dc]);
-      const p = addPiece(id, active.value, cells);
-      p.j = active.j;                       // the stretch from falling turns into the squash
-      p.j.swT = 0;
-      p.j.sT = 0;
-      impact(p, 1);
-      active = null;
-      phase = 'settle';
-      settleTimer = STEP_MS;
-    }
-
-    // One beat of settling: blocks fall first, then matching neighbors merge.
-    // Returns true if anything changed (so there may be more to do).
-    function settleStep() {
-      const maxRow = (p) => Math.max(...p.cells.map(([r]) => r));
-      const list = [...pieces.values()].sort((a, b) => maxRow(b) - maxRow(a));   // lowest first
-      let moved = false;
-      const landed = [];
-      for (const p of list) {
-        if (canFall(p)) { movePieceDown(p); moved = true; }
-        else if (p.falling) { p.falling = false; landed.push(p); }      // it was falling and just stopped
-      }
-      for (const p of landed) impact(p, LAND_IMPACT);
-      if (moved) return true;
-      return mergeOnce();
-    }
-
-    function canFall(p) {
-      return p.cells.every(([r, c]) => r + 1 < ROWS && (grid[r + 1][c] === 0 || grid[r + 1][c] === p.id));
-    }
-
-    function movePieceDown(p) {
-      for (const [r, c] of p.cells) grid[r][c] = 0;
-      p.cells = p.cells.map(([r, c]) => [r + 1, c]);
-      for (const [r, c] of p.cells) grid[r][c] = p.id;
-      p.dy -= 1;                                   // drawn one row higher, then eases down
-      p.falling = true;
-      p.dirty = true;                              // it may now touch new neighbors
-    }
-
-    function mergeOnce() {
-      return mode === 'squares' ? mergeSquaresOnce() : mergeDoublesOnce();
-    }
-
-    // Doubles: touching blocks with the same value merge into one block of double the value.
-    function mergeDoublesOnce() {
-      const pairs = [];
-      const seen = new Set();
-      for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
-          const id = grid[r][c];
-          if (!id) continue;
-          for (const [dr, dc] of [[0, 1], [1, 0]]) {
-            const r2 = r + dr, c2 = c + dc;
-            if (r2 >= ROWS || c2 >= COLS) continue;
-            const id2 = grid[r2][c2];
-            if (!id2 || id2 === id) continue;
-            if (pieces.get(id).value !== pieces.get(id2).value) continue;
-            const key = Math.min(id, id2) + '-' + Math.max(id, id2);
-            if (seen.has(key)) continue;
-            seen.add(key);
-            pairs.push([id, id2]);
-          }
-        }
-      }
-      const used = new Set();
-      let merged = false;
-      for (const [a, b] of pairs) {
-        if (used.has(a) || used.has(b)) continue;
-        const pa = pieces.get(a), pb = pieces.get(b);
-        mergeGroup([pa, pb], pa.value * 2);
-        used.add(a);
-        used.add(b);
-        merged = true;
-      }
-      return merged;
-    }
-
-    // Squares: a group of touching blocks whose values add up to a square number merges into
-    // one square block. The smallest group wins (fewest blocks, then the smallest total), and
-    // only groups that include a block that just landed, fell, or was made are searched.
-    function isSquare(n) {
-      const r = Math.round(Math.sqrt(n));
-      return r * r === n;
-    }
-
-    function contactGraph() {
-      const adj = new Map();
-      for (const id of pieces.keys()) adj.set(id, new Set());
-      for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
-          const id = grid[r][c];
-          if (!id) continue;
-          for (const [dr, dc] of [[0, 1], [1, 0]]) {
-            const r2 = r + dr, c2 = c + dc;
-            if (r2 >= ROWS || c2 >= COLS) continue;
-            const id2 = grid[r2][c2];
-            if (id2 && id2 !== id) { adj.get(id).add(id2); adj.get(id2).add(id); }
-          }
-        }
-      }
-      return adj;
-    }
-
-    // Finds every connected group of exactly `size` blocks that includes the seed and adds up to a square.
-    function findSquareGroups(seedId, size, adj, budget, report) {
-      const MAXSUM = COLS * COLS;                  // the biggest square that fits across the board
-      const sub = [seedId];
-      const inSub = new Set(sub);
-      const walk = (sum, ext, banned) => {
-        if (sub.length === size) {
-          if (isSquare(sum)) report(sub.slice(), sum);
-          return;
-        }
-        for (let i = 0; i < ext.length; i++) {
-          if (--budget.left < 0) return;
-          const w = ext[i];
-          const total = sum + pieces.get(w).value;
-          if (total > MAXSUM) continue;
-          // Blocks tried earlier in this list are off limits below, so each group is found once.
-          const childBanned = new Set(banned);
-          for (let k = 0; k < i; k++) childBanned.add(ext[k]);
-          const inExt = new Set(ext);
-          const childExt = ext.slice(i + 1);
-          for (const u of adj.get(w)) {
-            if (!inSub.has(u) && !childBanned.has(u) && !inExt.has(u)) childExt.push(u);
-          }
-          sub.push(w);
-          inSub.add(w);
-          walk(total, childExt, childBanned);
-          sub.pop();
-          inSub.delete(w);
-        }
-      };
-      walk(pieces.get(seedId).value, [...adj.get(seedId)], new Set());
-    }
-
-    function mergeSquaresOnce() {
-      const seeds = [...pieces.values()].filter((p) => p.dirty).map((p) => p.id);
-      if (!seeds.length) return false;
-      const adj = contactGraph();
-      const budget = { left: 30000 };              // keeps a crowded board from ever stalling the game
-      let best = null;
-      for (let size = 2; size <= 14 && !best && budget.left > 0; size++) {
-        for (const id of seeds) {
-          findSquareGroups(id, size, adj, budget, (group, sum) => {
-            if (!best || sum < best.sum) best = { group, sum };
-          });
-        }
-      }
-      if (!best) {
-        for (const p of pieces.values()) p.dirty = false;      // nothing to merge until something moves
-        return false;
-      }
-      mergeGroup(best.group.map((id) => pieces.get(id)), best.sum);
-      return true;
-    }
-
-    // The blocks in a group become one block of the new value, reshaped into
-    // the proper Numberblock shape wherever it fits (1 + 1 = 2, 4 + 4 + 1 = 9, ...).
-    function mergeGroup(group, value) {
-      const union = group.flatMap((p) => p.cells);
-      const unionKeys = new Set(union.map(([r, c]) => r + ',' + c));
-      const centerCol = union.reduce((s, [, c]) => s + c + 0.5, 0) / union.length;
-
-      for (const [r, c] of union) grid[r][c] = 0;
-      for (const p of group) pieces.delete(p.id);
-
-      const shape = shapeFor(value);
-      let cells = placeBest(shape, unionKeys, centerCol);
-      if (!cells && shape.w !== shape.h) cells = placeBest(turned(shape), unionKeys, centerCol);
-      if (!cells) cells = union;                   // no room to reshape: keep the squares where they are
-
-      const id = nextId++;
-      const m = addPiece(id, value, cells);
-      m.pop = 1;
-      // The new block carries on the wobble of the blocks it came from, then boings taller.
-      const avg = (k) => group.reduce((sum, p) => sum + p.j[k], 0) / group.length;
-      Object.assign(m.j, { s: avg('s'), sv: avg('sv') - 7 * JELLY, sw: avg('sw'), swv: avg('swv'), b: avg('b'), bv: avg('bv') });
-      bumpNeighbors(m, 0.5);
-
-      score += value;
-      scoreElem.textContent = score;
-    }
-
-    // Best spot for a shape: overlapping the old blocks, as low as possible, nearest their middle.
-    function placeBest(shape, unionKeys, centerCol) {
-      let best = null, bestScore = -Infinity;
-      for (let r0 = 0; r0 <= ROWS - shape.h; r0++) {
-        for (let c0 = 0; c0 <= COLS - shape.w; c0++) {
-          let overlap = 0, ok = true;
-          for (const [dr, dc] of shape.cells) {
-            const r = r0 + dr, c = c0 + dc;
-            if (grid[r][c] !== 0) { ok = false; break; }
-            if (unionKeys.has(r + ',' + c)) overlap++;
-          }
-          if (!ok || overlap === 0) continue;
-          const s = overlap * 1000 + r0 * 10 - Math.abs(c0 + shape.w / 2 - centerCol);
-          if (s > bestScore) { bestScore = s; best = [r0, c0]; }
-        }
-      }
-      return best && shape.cells.map(([dr, dc]) => [best[0] + dr, best[1] + dc]);
-    }
-
-    function triggerGameOver() {
-      phase = 'over';
-      active = null;
-      gameOverElem.style.display = 'flex';
-    }
-
-    function resetGame() {
-      grid = makeGrid();
-      pieces = new Map();
-      nextId = 1;
-      score = 0;
-      scoreElem.textContent = score;
-      pointerIsDown = false;
-      gameOverElem.style.display = 'none';
-      spawnNextBlock();
-    }
-
-    function update(dt) {
-      for (const p of pieces.values()) {
-        if (p.dy < 0) p.dy = Math.min(0, p.dy + dt / STEP_MS);
-        if (p.pop > 0) p.pop = Math.max(0, p.pop - dt / 260);
-        p.j.sT = p.dy < -0.02 ? -FALL_STRETCH * JELLY : 0;
-        stepJelly(p.j, dt);
-      }
-      updateRide();
-
-      if (active) {
-        const prevX = active.x;
-        active.x += (active.col * CELL - active.x) * (1 - Math.exp(-dt * 0.035));   // quick slide into the snapped spot
-        const vx = (active.x - prevX) / Math.max(dt, 1) * 1000;                       // px per second
-        active.j.swT = phase === 'aim' ? Math.max(-9, Math.min(9, -vx * 0.012)) * JELLY : 0;   // top lags behind
-        active.j.sT = phase === 'drop' ? -FALL_STRETCH * 1.2 * JELLY : 0;
-        stepJelly(active.j, dt);
-        if (phase === 'drop') {
-          active.y += DROP_SPEED * dt / 1000;
-          if (active.y >= active.land) lockActive();
-        }
-      }
-
-      if (phase === 'settle') {
-        settleTimer -= dt;
-        if (settleTimer <= 0) {
-          if (settleStep()) settleTimer = STEP_MS;
-          else spawnNextBlock();
-        }
-      }
-    }
-
-    // --- DRAWING ---
-    function shade(hex, amt) {
-      const n = parseInt(hex.slice(1), 16);
-      const target = amt < 0 ? 0 : 255;
-      const p = Math.abs(amt);
-      const mix = (v) => Math.round(v + (target - v) * p);
-      return `rgb(${mix(n >> 16)}, ${mix((n >> 8) & 255)}, ${mix(n & 255)})`;
-    }
-
-    function traceOutline(cells, keys, ox, oy, inset, wp) {
-      ctx.beginPath();
-      const seg = (ax, ay, bx, by) => {
-        const [px, py] = wp(ax, ay), [qx, qy] = wp(bx, by);
-        ctx.moveTo(px, py);
-        ctx.lineTo(qx, qy);
-      };
-      for (const [r, c] of cells) {
-        const x = ox + c * CELL, y = oy + r * CELL;
-        if (!keys.has((r - 1) + ',' + c)) seg(x, y + inset, x + CELL, y + inset);
-        if (!keys.has((r + 1) + ',' + c)) seg(x, y + CELL - inset, x + CELL, y + CELL - inset);
-        if (!keys.has(r + ',' + (c - 1))) seg(x + inset, y, x + inset, y + CELL);
-        if (!keys.has(r + ',' + (c + 1))) seg(x + CELL - inset, y, x + CELL - inset, y + CELL);
-      }
-    }
-
-    function drawFace(cx, cy, s, sx = 1, sy = 1, rot = 0) {
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.rotate(rot);
-      ctx.scale(s * sx, s * sy);
-      for (const ex of [-7, 7]) {
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.arc(ex, -3, 5.2, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        ctx.fillStyle = '#111111';
-        ctx.beginPath();
-        ctx.arc(ex + 0.5, -2.5, 2.4, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.strokeStyle = '#111111';
-      ctx.lineWidth = 2;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.arc(0, 2, 7, Math.PI * 0.2, Math.PI * 0.8);
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    // Draws one Numberblock: a set of squares with a face on the top row
-    // and the number on the bottom row. The squares are bent by the block's jelly springs.
-    function drawShape(cells, ox, oy, value, o = {}) {
-      const look = NUMBERBLOCKS[value] || FALLBACK_LOOK;
-      const keys = new Set(cells.map(([r, c]) => r + ',' + c));
-      const b = bounds(cells);
-      const j = o.jelly;
-      const sq = j ? j.s : 0, sway = j ? j.sw : 0, bend = j ? j.b : 0;
-
-      // The jelly warp: the bottom stays planted, the top squashes down, the sides bulge,
-      // and the top leans and wobbles. It's applied to every corner so the squares stay joined.
-      const baseY = oy + (b.maxR + 1) * CELL;
-      const midX = ox + (b.minC + b.maxC + 1) * CELL / 2;
-      const H = b.h * CELL;
-      const heightFrac = (y) => Math.min(1, Math.max(0, (baseY - y) / H));
-      const wp = (x, y) => {
-        const t = heightFrac(y);
-        const wide = 1 + sq * (0.3 + 0.5 * Math.sin(Math.PI * t));
-        return [midX + (x - midX) * wide + sway * t + bend * t * t, baseY - (baseY - y) * (1 - sq)];
-      };
-      // Where a point ends up, and how much the jelly stretches and tilts things there (for the face and number)
-      const local = (x, y) => {
-        const [px, py] = wp(x, y);
-        const t = heightFrac(y);
-        return { x: px, y: py, sx: 1 + sq * (0.3 + 0.5 * Math.sin(Math.PI * t)), sy: 1 - sq, rot: 0.5 * (sway + 2 * bend * t) / H };
-      };
-      const quad = (x, y) => [wp(x, y), wp(x + CELL, y), wp(x + CELL, y + CELL), wp(x, y + CELL)];
-      const tracePoly = (pts) => {
-        ctx.beginPath();
-        ctx.moveTo(pts[0][0], pts[0][1]);
-        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-      };
-
-      ctx.save();
-      ctx.globalAlpha = o.alpha === undefined ? 1 : o.alpha;
-
-      if (o.ghost) {
-        const flat = (x, y) => [x, y];
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.07)';
-        for (const [r, c] of cells) ctx.fillRect(ox + c * CELL, oy + r * CELL, CELL, CELL);
-        traceOutline(cells, keys, ox, oy, 1, flat);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
-        ctx.lineWidth = 2;
-        ctx.lineCap = 'square';
-        ctx.stroke();
-        ctx.restore();
-        return;
-      }
-
-      // Squares
-      for (const [r, c] of cells) {
-        const x = ox + c * CELL, y = oy + r * CELL;
-        const pts = quad(x, y);
-        tracePoly(pts);
-        ctx.closePath();
-        ctx.fillStyle = look.color;
-        ctx.fill();
-        ctx.lineWidth = 1;                       // hides hairline seams between squares
-        ctx.lineJoin = 'round';
-        ctx.strokeStyle = look.color;
-        ctx.stroke();
-
-        ctx.lineWidth = 3;
-        ctx.lineCap = 'butt';
-        tracePoly([wp(x + 4, y + CELL - 4), wp(x + 4, y + 4), wp(x + CELL - 4, y + 4)]);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.38)';
-        ctx.stroke();
-        tracePoly([wp(x + CELL - 4, y + 4), wp(x + CELL - 4, y + CELL - 4), wp(x + 4, y + CELL - 4)]);
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
-        ctx.stroke();
-      }
-
-      // Flash when a merge just happened
-      if (o.flash > 0) {
-        ctx.fillStyle = `rgba(255, 255, 255, ${0.55 * o.flash})`;
-        for (const [r, c] of cells) {
-          tracePoly(quad(ox + c * CELL, oy + r * CELL));
-          ctx.closePath();
-          ctx.fill();
-        }
-      }
-
-      // Outline around the whole shape
-      traceOutline(cells, keys, ox, oy, 1.5, wp);
-      ctx.strokeStyle = shade(look.color, -0.45);
-      ctx.lineWidth = 3;
-      ctx.lineCap = 'butt';
-      ctx.stroke();
-
-      // Face on the top row
-      const faceScale = Math.min(1.9, 1 + 0.35 * Math.log2(b.w));
-      const topRow = cells.filter(([r]) => r === b.minR);
-      const faceX = ox + (topRow.reduce((s, [, c]) => s + c, 0) / topRow.length + 0.5) * CELL;
-      const f = local(faceX, oy + (b.minR + 0.5) * CELL);
-      drawFace(f.x, f.y, faceScale, f.sx, f.sy, f.rot);
-
-      // Number on the bottom row (only when the shape is more than one row tall)
-      if (b.maxR > b.minR) {
-        const botRow = cells.filter(([r]) => r === b.maxR);
-        const numX = ox + (botRow.reduce((s, [, c]) => s + c, 0) / botRow.length + 0.5) * CELL;
-        const n = local(numX, oy + (b.maxR + 0.5) * CELL);
-        ctx.save();
-        ctx.translate(n.x, n.y + 1);
-        ctx.rotate(n.rot);
-        ctx.scale(n.sx, n.sy);
-        ctx.font = `800 ${Math.round(15 * Math.min(1.7, faceScale))}px 'Segoe UI', Arial, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.lineJoin = 'round';
-        ctx.lineWidth = 4;
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.45)';
-        ctx.strokeText(String(value), 0, 0);
-        ctx.fillStyle = '#ffffff';
-        ctx.fillText(String(value), 0, 0);
-        ctx.restore();
-      }
-
-      ctx.restore();
-    }
-
-    function render() {
-      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-      ctx.clearRect(0, 0, W, H);
-
-      // Blocks that have landed (the most squished are drawn last so they bulge over their neighbors)
-      const wobble = (p) => Math.abs(p.j.s) + Math.abs(p.j.sw) / 40;
-      for (const p of [...pieces.values()].sort((a, b) => wobble(a) - wobble(b))) {
-        drawShape(p.cells, p.rx, p.dy * CELL + p.ry, p.value, { jelly: p.j, flash: p.pop });
-      }
-
-      // The block you're aiming or dropping
-      if (active) {
-        if (SHOW_GHOST && phase === 'aim' && active.land > 0) {
-          drawShape(active.shape.cells, active.col * CELL, active.land * CELL, active.value, { ghost: true });
-        }
-        drawShape(active.shape.cells, active.x, active.y * CELL, active.value, {
-          alpha: active.land < 0 ? 0.4 : 1,
-          jelly: active.j
-        });
-      }
-    }
-
-    // --- GAME LOOP ---
-    let lastTime = 0;
-    function frame(now) {
-      if (!lastTime) lastTime = now;
-      const dt = Math.min(50, now - lastTime);
-      lastTime = now;
-      update(dt);
-      render();
-      requestAnimationFrame(frame);
-    }
-
-    updateModeUI();
-    spawnNextBlock();
-    requestAnimationFrame(frame);
-  </script>
-</body>
-</html>
+      if (e.target.closest && e.target.close
